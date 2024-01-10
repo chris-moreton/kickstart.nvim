@@ -194,7 +194,7 @@ require('lazy').setup({
     'navarasu/onedark.nvim',
     priority = 1000,
     config = function()
-      vim.cmd.colorscheme 'onedark'
+      vim.cmd.colorscheme 'ayu'
     end,
   },
 
@@ -205,7 +205,7 @@ require('lazy').setup({
     opts = {
       options = {
         icons_enabled = false,
-        theme = 'onedark',
+        theme = 'ayu',
         component_separators = '|',
         section_separators = '',
       },
@@ -349,6 +349,11 @@ require('telescope').setup {
     },
   },
 }
+
+require('ayu').setup({
+    mirage = false, -- Set to `true` to use `mirage` variant instead of `dark` for dark background.
+    overrides = {}, -- A dictionary of group names, each associated with a dictionary of parameters (`bg`, `fg`, `sp` and `style`) and colors in hex.
+})
 
 require'lspconfig'.tsserver.setup{}
 
