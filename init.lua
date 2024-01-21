@@ -194,7 +194,7 @@ require('lazy').setup({
     'navarasu/onedark.nvim',
     priority = 1000,
     config = function()
-      vim.cmd.colorscheme 'ayu'
+      vim.cmd.colorscheme 'onedark'
     end,
   },
 
@@ -205,7 +205,7 @@ require('lazy').setup({
     opts = {
       options = {
         icons_enabled = false,
-        theme = 'ayu',
+        theme = 'onedark',
         component_separators = '|',
         section_separators = '',
       },
@@ -665,6 +665,101 @@ cmp.setup {
     { name = 'path' },
   },
 }
+
+local api = vim.api
+
+local function get_test_name()
+    local line_number = api.nvim_win_get_cursor(0)[1]
+    local lines = api.nvim_buf_get_lines(0, 0, -1, false)
+    local test_name = nil
+
+    for i = line_number, 1, -1 do
+        print(lines[i])
+        if lines[i]:find('it%s*%(') or lines[i]:find('describe%s*%(') then
+            -- Extract the text within the first pair of single quotes
+            test_name = lines[i]:match("'%s*(.-)%s*'")
+
+            if test_name then
+                return test_name -- Return the extracted test name
+            end
+        end
+    end
+
+    return nil -- Return nil if no test name is found
+end
+
+local function createFloatingWindow()
+    local buf = api.nvim_create_buf(false, true) -- Create a new buffer
+    local width = math.floor(vim.o.columns * 0.8) -- Ensure width is an integer
+    local height = math.floor(vim.o.lines * 0.8) -- Ensure height is an integer
+    width = width > 0 and width or 20 -- Ensure width is positive
+    height = height > 0 and height or 10 -- Ensure height is positive
+
+    local col = math.floor((vim.o.columns - width) / 2)
+    local row = math.floor((vim.o.lines - height) / 2)
+    local opts = {
+        style = "minimal",
+        relative = "editor",
+        width = width,
+        height = height,
+        col = col,
+        row = row
+    }
+    api.nvim_open_win(buf, true, opts) -- Open the window
+    return buf
+end
+
+local function run_command(command, output_callback, completion_callback)
+    vim.fn.jobstart(command, {
+        stdout_buffered = true,
+        on_stdout = function(_, data)
+            if data then
+                output_callback(data)
+                for _, line in ipairs(data) do
+                    if line:match("^Done in") then
+                        if completion_callback then
+                            completion_callback()
+                            return
+                        end
+                    end
+                end
+            end
+        end,
+        on_stderr = function(_, data)
+            output_callback(data)
+        end,
+        stderr_buffered = true,
+    })
+end
+
+function run_test()
+
+    local filename = vim.fn.expand('%:t'):gsub('%.ts$', '.js')
+    local test_name = get_test_name()
+    local cwd = '~/git/chaching/cmb/packages/chaching'
+
+    local buf = createFloatingWindow()
+    local function output_to_buffer(data)
+        if data then
+            api.nvim_buf_set_lines(buf, -1, -1, false, data)
+        end
+    end
+
+    local function on_build_complete()
+        if test_name then
+            local jest_command = "cd " .. cwd .. " && DOTENV_CONFIG_PATH=../../.env node --expose-gc -r reflect-metadata -r dotenv/config ./node_modules/.bin/jest " .. filename .. " --testNamePattern=\"" .. test_name .. "\""
+            output_to_buffer({"Running test: " .. jest_command})
+            run_command(jest_command, output_to_buffer)
+        else
+            api.nvim_buf_set_lines(buf, -1, -1, false, {"No test found at cursor position"})
+        end
+    end
+
+    run_command("cd " .. cwd .. " && yarn build", output_to_buffer, on_build_complete)
+
+end
+
+api.nvim_set_keymap('n', '<leader>t', '<cmd>lua run_test()<CR>', { noremap = true, silent = true })
 
 -- The line beneath this is called `modeline`. See `:help modeline`
 -- vim: ts=2 sts=2 sw=2 et
