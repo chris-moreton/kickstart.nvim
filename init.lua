@@ -720,6 +720,29 @@ vim.cmd [[
   highlight CustomPass ctermfg=Green guifg=Green
   highlight CustomSkip ctermfg=Yellow guifg=Yellow
 ]]
+local comment_prefix = "//:---- "
+
+local function clear_failure_messages()
+    local buffer_lines = api.nvim_buf_get_lines(0, 0, -1, false)
+    local new_lines = {}
+
+    for _, line in ipairs(buffer_lines) do
+        if not line:find("^" .. comment_prefix) then
+            table.insert(new_lines, line)
+        end
+    end
+
+    api.nvim_buf_set_lines(0, 0, -1, false, new_lines)
+end
+
+local function display_failure_message(line_number, message)
+    local lines = {}
+    for line in message:gmatch("([^\n]+)") do
+        table.insert(lines, comment_prefix .. line)
+    end
+
+    api.nvim_buf_set_lines(0, line_number + 1, line_number + 1, false, lines)
+end
 
 local function highlight_test_results(data)
 
@@ -729,22 +752,31 @@ local function highlight_test_results(data)
     end
 
     local testResults = data.testResults[1].assertionResults
+
     for _, result in ipairs(testResults) do
         local test_status = result.status
         local test_name = result.title
-
         local line_number = find_test_line_number(test_name)
         if line_number then
-          local hg = (test_status == "passed" and "CustomPass") or
-                                  (test_status == "failed" and "CustomFail") or
-                                  (test_status == "pending" and "CustomSkip") or
-                                  "DefaultHighlight"
-          api.nvim_buf_add_highlight(0, -1, hg, line_number, 0, -1)
+            local hg = (test_status == "passed" and "CustomPass") or
+                        (test_status == "failed" and "CustomFail") or
+                        (test_status == "pending" and "CustomSkip") or
+                        "DefaultHighlight"
+            api.nvim_buf_add_highlight(0, -1, hg, line_number, 0, -1)
+
+            -- Handle failure message
+            if test_status == "failed" and result.failureMessages and #result.failureMessages > 0 then
+                local failureMessage = result.failureMessages[1]
+                print(failureMessage)
+                display_failure_message(line_number, failureMessage)
+            end
         end
     end
 end
 
 function run_test(line_number)
+
+    clear_failure_messages()
 
     local filename = vim.fn.expand('%:t'):gsub('%.ts$', '.js')
     local test_name = get_test_name(line_number)
@@ -756,6 +788,7 @@ function run_test(line_number)
         vim.fn.jobstart("cd " .. cwd .. " && yarn build", {
           on_exit = function(job_id, exit_code, event_type)
             local test_result_file = os.tmpname()
+            print(test_result_file)
             local jest_command = "cd " .. cwd .. " && DOTENV_CONFIG_PATH=../../.env node --expose-gc -r reflect-metadata -r dotenv/config ./node_modules/.bin/jest " .. filename .. " --testNamePattern=\"" .. test_name .. "\" --json --outputFile=" .. test_result_file
             vim.fn.jobstart(jest_command, {
               on_exit = function(job_id, exit_code, event_type)
