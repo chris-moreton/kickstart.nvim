@@ -751,6 +751,8 @@ function run_test(line_number)
     local cwd = '~/git/chaching/cmb/packages/chaching'
 
     if test_name then
+        api.nvim_buf_clear_namespace(0, -1, 0, -1)
+
         vim.fn.jobstart("cd " .. cwd .. " && yarn build", {
           on_exit = function(job_id, exit_code, event_type)
             local test_result_file = os.tmpname()
