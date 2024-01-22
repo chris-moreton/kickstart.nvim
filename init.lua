@@ -94,6 +94,12 @@ require('lazy').setup({
       'folke/neodev.nvim',
     },
   },
+  {
+          'prettier/vim-prettier',
+        run = 'yarn install --frozen-lockfile --production',
+        ft = {'javascript', 'typescript', 'css', 'json', 'graphql', 'markdown', 'vue', 'yaml', 'html'}  -- Add file types as needed
+    },
+
 
   {
     -- Autocompletion
@@ -666,7 +672,18 @@ cmp.setup {
   },
 }
 
+vim.cmd [[
+  augroup PrettierAutocommand
+    autocmd!
+    autocmd BufWritePre *.js,*.jsx,*.ts,*.tsx,*.css,*.json,*.md Prettier
+  augroup END
+]]
+
 local api = vim.api
+
+local function extract_test_name(line)
+    return line:match("'%s*(.-)%s*'")
+end
 
 local function get_test_name(line_number)
     local lines = api.nvim_buf_get_lines(0, 0, -1, false)
@@ -680,6 +697,21 @@ local function get_test_name(line_number)
             if test_name then
                 return test_name -- Return the extracted test name
             end
+        end
+    end
+
+      local total_lines = #lines
+
+  for i = line_number, 1, -1 do
+        if lines[i]:find('it%s*%(') or lines[i]:find('describe%s*%(') then
+            return extract_test_name(lines[i])
+        end
+    end
+
+    -- Search forward
+    for i = line_number + 1, total_lines do
+        if lines[i]:find('it%s*%(') or lines[i]:find('describe%s*%(') then
+            return extract_test_name(lines[i])
         end
     end
 
@@ -722,17 +754,50 @@ vim.cmd [[
 ]]
 local comment_prefix = "//:---- "
 
+local first_failure_line = nil
+
 local function clear_failure_messages()
     local buffer_lines = api.nvim_buf_get_lines(0, 0, -1, false)
     local new_lines = {}
 
     for _, line in ipairs(buffer_lines) do
-        if not line:find("^" .. comment_prefix) then
+        if not line:find(comment_prefix) then
             table.insert(new_lines, line)
         end
     end
 
     api.nvim_buf_set_lines(0, 0, -1, false, new_lines)
+end
+
+local function set_test_status(line_number, status)
+    local ns_id = vim.api.nvim_create_namespace('test_status')
+    local symbols = {
+        passed = {"✔", "TestPassed"},
+        failed = {"✖", "TestFailed"}
+    }
+    local symbol, hl_group = unpack(symbols[status] or {"", ""})
+
+    -- Clear previous virtual text in this namespace to avoid duplicates
+    vim.api.nvim_buf_clear_namespace(0, ns_id, line_number - 1, line_number)
+
+    -- Set virtual text at the end of the line
+    vim.api.nvim_buf_set_extmark(0, ns_id, line_number - 1, 0, {
+        virt_text = {{symbol, hl_group}},
+        virt_text_pos = 'eol',  -- Position at the end of the line
+        hl_mode = 'combine'     -- Combine with existing syntax highlighting
+    })
+end
+
+local function display_failure_message_as_virtual_text(line_number, message)
+    local ns_id = api.nvim_create_namespace('test_failure_message')
+    api.nvim_buf_clear_namespace(0, ns_id, 0, -1)  -- Clear previous virtual texts
+
+    for i, line in ipairs(vim.split(message, '\n')) do
+        api.nvim_buf_set_extmark(0, ns_id, line_number + i - 1, 0, {
+            virt_text = {{line, 'Error'}},
+            virt_text_pos = 'overlay',  -- or 'right_align' or 'eol'
+        })
+    end
 end
 
 local function display_failure_message(line_number, message)
@@ -745,6 +810,8 @@ local function display_failure_message(line_number, message)
 end
 
 local function highlight_test_results(data)
+
+    first_failure_line = nil
 
     if not data or not data.testResults or #data.testResults == 0 then
         print("No test results found.")
@@ -764,13 +831,27 @@ local function highlight_test_results(data)
                         "DefaultHighlight"
             api.nvim_buf_add_highlight(0, -1, hg, line_number, 0, -1)
 
-            -- Handle failure message
+            set_test_status(line_number, test_status)
+
             if test_status == "failed" and result.failureMessages and #result.failureMessages > 0 then
+                if not first_failure_line then
+                    first_failure_line = line_number
+                end
                 local failureMessage = result.failureMessages[1]
                 print(failureMessage)
                 display_failure_message(line_number, failureMessage)
             end
         end
+    end
+end
+
+local function center_on_first_failure()
+    if first_failure_line then
+local win_height = vim.api.nvim_win_get_height(0)
+        local middle_line = math.max(first_failure_line - math.floor(win_height / 2), 1)
+
+        -- Use the 'z' command to center the window on middle_line
+        vim.cmd(middle_line .. "z.")
     end
 end
 
@@ -788,17 +869,18 @@ function run_test(line_number)
         vim.fn.jobstart("cd " .. cwd .. " && yarn build", {
           on_exit = function(job_id, exit_code, event_type)
             local test_result_file = os.tmpname()
-            print(test_result_file)
             local jest_command = "cd " .. cwd .. " && DOTENV_CONFIG_PATH=../../.env node --expose-gc -r reflect-metadata -r dotenv/config ./node_modules/.bin/jest " .. filename .. " --testNamePattern=\"" .. test_name .. "\" --json --outputFile=" .. test_result_file
             vim.fn.jobstart(jest_command, {
               on_exit = function(job_id, exit_code, event_type)
                 local test_data = parse_test_results(test_result_file)
                 highlight_test_results(test_data)
+                center_on_first_failure()
               end,
             })
           end,
         })
     end
+
 
 end
 
@@ -811,7 +893,7 @@ vim.cmd [[
     command! -nargs=1 Test w | lua run_test(tonumber(<f-args>))
 ]]
 
-api.nvim_set_keymap('n', '<leader>t', '<cmd>lua run_test_at_cursor()<CR>', { noremap = true, silent = true })
+api.nvim_set_keymap('n', 't', '<cmd>lua run_test_at_cursor()<CR>', { noremap = true, silent = true })
 
 -- The line beneath this is called `modeline`. See `:help modeline`
 -- vim: ts=2 sts=2 sw=2 et
