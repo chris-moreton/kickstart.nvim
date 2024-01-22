@@ -756,17 +756,25 @@ local comment_prefix = "//:---- "
 
 local first_failure_line = nil
 
-local function clear_failure_messages()
+local function clear_failure_messages(current_line_number)
     local buffer_lines = api.nvim_buf_get_lines(0, 0, -1, false)
     local new_lines = {}
 
-    for _, line in ipairs(buffer_lines) do
+    local line_adjust = 0
+
+    for i, line in ipairs(buffer_lines) do
         if not line:find(comment_prefix) then
             table.insert(new_lines, line)
+        else
+            if i < current_line_number then
+                line_adjust = line_adjust - 1
+            end
         end
     end
 
     api.nvim_buf_set_lines(0, 0, -1, false, new_lines)
+
+    return line_adjust
 end
 
 local function set_test_status(line_number, status)
@@ -857,7 +865,9 @@ end
 
 function run_test(line_number)
 
-    clear_failure_messages()
+    vim.cmd("w")
+
+    line_number = line_number + clear_failure_messages(line_number)
 
     local filename = vim.fn.expand('%:t'):gsub('%.ts$', '.js')
     local test_name = get_test_name(line_number)
@@ -890,7 +900,7 @@ function run_test_at_cursor()
 end
 
 vim.cmd [[
-    command! -nargs=1 Test w | lua run_test(tonumber(<f-args>))
+    command! -nargs=1 Test lua run_test(tonumber(<f-args>))
 ]]
 
 api.nvim_set_keymap('n', 't', '<cmd>lua run_test_at_cursor()<CR>', { noremap = true, silent = true })
